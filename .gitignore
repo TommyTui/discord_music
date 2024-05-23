@@ -1,4 +1,4 @@
 .env
 ffmpeg.exe
-Dockerfile
 .idea
+.git
