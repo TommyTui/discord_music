@@ -10,6 +10,9 @@ class Music(Model):
 
     class Meta:
         database = db
+        indexes = (
+            (('url', 'pid'), True),
+        )
 
 
 db.connect()
