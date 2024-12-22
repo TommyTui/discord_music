@@ -5,6 +5,6 @@ services:
     environment:
       - TOKEN=${TOKEN}
     volumes:
-      - ./discord.db:/bot/discord.db  # Replace with the actual path to your .db file
+      - ./discord.db:/bot/discord.db
     working_dir: /bot
     command: python bot.py

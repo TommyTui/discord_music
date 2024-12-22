@@ -1,5 +1,4 @@
 import random
-import threading
 import traceback
 
 import discord
@@ -21,7 +20,7 @@ intent.voice_states = True
 intent.messages = True
 queue = asyncio.Queue()
 bot = commands.Bot(command_prefix='!', intents=intent)
-cv = threading.Condition()
+cv = asyncio.Condition()
 
 
 @bot.tree.command(description="摸摸")
@@ -147,8 +146,8 @@ def create_embed(interaction: discord.Interaction, data):
     return embed
 
 
-def play_cb(error):
-    with cv:
+async def play_cb(error=None):
+    async with cv:
         cv.notify()
 
 
@@ -160,10 +159,10 @@ async def _play():
         print("pop", flush=True)
         await interaction.channel.send(embed=create_embed(interaction, data))
         music = get_bilibili(data) if data.type == 0 else get_youtube(data)
-        interaction.guild.voice_client.play(music, after=play_cb)
-        with cv:
-            while interaction.guild.voice_client.is_playing():
-                cv.wait()
+        interaction.guild.voice_client.play(music, after=lambda e: asyncio.run(play_cb(e)))
+        async with cv:
+            while interaction.guild.voice_client and interaction.guild.voice_client.is_playing():
+                await cv.wait()
         if queue.empty() and interaction.guild.voice_client:
             await interaction.guild.voice_client.disconnect(force=False)
         queue.task_done()
@@ -215,7 +214,7 @@ async def skip(interaction: discord.Interaction):
 
 
 @bot.tree.command(description="Modify the playlist")
-async def playlist(interaction: discord.Interaction, action: str, url: str):
+async def list(interaction: discord.Interaction, action: str, url: str):
     await interaction.response.defer()
     pid = None
     if 'bilibili' in url:
@@ -223,11 +222,11 @@ async def playlist(interaction: discord.Interaction, action: str, url: str):
         match = re.search(r'\?p=\d+', url)
         pid = int(match.group(0).split('=')[1]) if match else None
         type = "0"
-    elif 'youtube' in url:
+    elif 'youtube' in url and url.startswith("http"):
         processed_url = url
         type = "1"
     else:
-        await interaction.followup.send("Unsupported URL")
+        await interaction.followup.send("不要")
         return
 
     if action == "add":
@@ -251,7 +250,6 @@ async def playl(interaction: discord.Interaction, count: int = 5):
             await enqueue_bilibili(interaction, music.url, music.pid)
         elif music.type == "1":
             await enqueue_ytb(interaction, music.url, False)
-
 
 
 @bot.event
