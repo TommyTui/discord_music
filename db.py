@@ -29,3 +29,7 @@ def insert(url, type, pid=None):
 
 def delete(url, pid=None):
     Music.delete().where(Music.url == url, Music.pid == pid).execute()
+
+
+def list_all():
+    return Music.select()
