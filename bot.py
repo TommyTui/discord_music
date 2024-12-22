@@ -2,6 +2,7 @@ import random
 import traceback
 
 import discord
+import validators
 import yt_dlp
 from bilibili_api import HEADERS
 from bilibili_api import video
@@ -11,6 +12,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 from db import *
+from util import get_bv_and_p
 
 load_dotenv()
 TOKEN = os.getenv('TOKEN')
@@ -53,11 +55,9 @@ async def play(interaction: discord.Interaction, query: str):
     if not await ensure_voice(interaction):
         return
     try:
-        if query.startswith("http"):
+        if validators.url(query) is True:
             if 'bilibili' in query:
-                bv = query.split('/')[4]
-                match = re.search(r'\?p=\d+', query)
-                pid = int(match.group(0).split('=')[1]) if match else None
+                bv, pid = get_bv_and_p(query)
                 await enqueue_bilibili(interaction, bv, pid)
             elif 'youtube' in query:
                 await enqueue_ytb(interaction, query, False)
@@ -70,37 +70,35 @@ async def play(interaction: discord.Interaction, query: str):
         traceback.print_exc()
         await interaction.followup.send("出问题了")
 
+async def enqueue_one(interaction: discord.Interaction, data):
+    detector = video.VideoDownloadURLDataDetecter(data.url)
+    stream = detector.detect_best_streams(
+        audio_accepted_qualities=[AudioQuality._64K, AudioQuality._132K, AudioQuality._192K])
+    stream: List[AudioStreamDownloadURL] = [s for s in stream if isinstance(s, AudioStreamDownloadURL)]
+    if not stream:
+        await interaction.followup.send("找不到啊")
+        return
+
+    data.url = stream[0].url
+    await queue.put((interaction, data))
+    await interaction.followup.send(f"Added **{data.title}** to queue")
 
 async def enqueue_bilibili(interaction: discord.Interaction, bv, pid=None) -> None:
     v = video.Video(bvid=bv)
-
-    async def enqueue_one(data):
-        detector = video.VideoDownloadURLDataDetecter(data.url)
-        stream = detector.detect_best_streams(
-            audio_accepted_qualities=[AudioQuality._64K, AudioQuality._132K, AudioQuality._192K])
-        stream: List[AudioStreamDownloadURL] = [s for s in stream if isinstance(s, AudioStreamDownloadURL)]
-        if not stream:
-            await interaction.followup.send("找不到啊")
-            return
-
-        data.url = stream[0].url
-        await queue.put((interaction, data))
-        await interaction.followup.send(f"Added **{data.title}** to queue")
-
     info = await v.get_info()
     if pid is not None:
         url = await v.get_download_url(page_index=pid)
-        await enqueue_one(Data.from_bili(info, url, False))
+        await enqueue_one(interaction, Data.from_bili(info, url, False))
     else:
         pages = await v.get_pages()
         if len(pages) > 1:
             for page in await v.get_pages():
                 cid = page['cid']
                 url = await v.get_download_url(cid=cid)
-                await enqueue_one(Data.from_bili(page, url, True, info['pic']))
+                await enqueue_one(interaction, Data.from_bili(page, url, True, info['pic']))
         else:
             url = await v.get_download_url(page_index=0)
-            await enqueue_one(Data.from_bili(info, url, False))
+            await enqueue_one(interaction, Data.from_bili(info, url, False))
 
 
 async def enqueue_ytb(interaction: discord.Interaction, url, search) -> None:
@@ -153,10 +151,8 @@ async def play_cb(error=None):
 
 async def _play():
     while True:
-        print("wait", flush=True)
         interaction: discord.Interaction
         interaction, data = await queue.get()
-        print("pop", flush=True)
         await interaction.channel.send(embed=create_embed(interaction, data))
         music = get_bilibili(data) if data.type == 0 else get_youtube(data)
         interaction.guild.voice_client.play(music, after=lambda e: asyncio.run(play_cb(e)))
@@ -235,12 +231,15 @@ async def list(interaction: discord.Interaction, action: str, url: str):
     elif action == "delete":
         delete(processed_url, pid)
         await interaction.followup.send(f"Removed {processed_url} from playlist")
+    elif action == "list":
+        music_lst = list_all()
+        await interaction.followup.send("\n".join([f"{m.url}{(' p='+m.pid) if m.pid else ''}" for m in music_lst]))
     else:
         await interaction.followup.send("Invalid action")
 
 
 @bot.tree.command(description="Play from playlist")
-async def playl(interaction: discord.Interaction, count: int = 5):
+async def fav(interaction: discord.Interaction, count: int = 5):
     await interaction.response.defer()
     if not await ensure_voice(interaction):
         return
