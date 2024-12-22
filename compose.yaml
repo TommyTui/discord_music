@@ -1,0 +1,10 @@
+version: '3.8'
+services:
+  app:
+    image: chococonuts/bot_x86:latest
+    environment:
+      - TOKEN=${TOKEN}
+    volumes:
+      - ./discord.db:/bot/discord.db  # Replace with the actual path to your .db file
+    working_dir: /bot
+    command: python bot.py
