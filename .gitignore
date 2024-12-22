@@ -3,3 +3,4 @@ ffmpeg.exe
 .idea
 .git
 discord.db
+__pycache__

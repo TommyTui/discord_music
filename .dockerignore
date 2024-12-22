@@ -2,3 +2,4 @@
 ffmpeg.exe
 .idea
 .git
+__pycache__
