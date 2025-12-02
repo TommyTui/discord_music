@@ -10,9 +10,45 @@ from bilibili_api.video import *
 from discord import Intents
 from discord.ext import commands
 from dotenv import load_dotenv
+import ctypes.util
+from discord import opus
 
 from db import *
 from util import get_bv_and_p
+
+
+def load_opus_lib():
+    if opus.is_loaded():
+        return
+
+    # 1. Try auto-discovery (Works on Linux/Docker usually)
+    opus_path = ctypes.util.find_library('opus')
+
+    # 2. If not found, check specific paths for Mac/Linux
+    if not opus_path:
+        candidate_paths = [
+            '/opt/homebrew/lib/libopus.dylib',  # Mac Apple Silicon
+            '/usr/local/lib/libopus.dylib',  # Mac Intel
+            '/usr/lib/x86_64-linux-gnu/libopus.so.0',  # Linux/Docker
+        ]
+        for path in candidate_paths:
+            if os.path.exists(path):
+                opus_path = path
+                break
+
+    # 3. Load it
+    if opus_path:
+        try:
+            opus.load_opus(opus_path)
+            print(f"✅ Loaded Opus from: {opus_path}")
+        except Exception as e:
+            print(f"⚠️ Found {opus_path} but failed to load: {e}")
+    else:
+        # On some Linux distros, it might be implicitly loaded, so we just warn
+        print("⚠️ Could not find Opus library path explicitly. Voice might fail.")
+
+
+load_opus_lib()
 
 load_dotenv()
 TOKEN = os.getenv('TOKEN')
@@ -20,7 +56,7 @@ intent = Intents.default()
 intent.reactions = True
 intent.voice_states = True
 intent.messages = True
-queue = asyncio.Queue()
+queue = None
 bot = commands.Bot(command_prefix='!', intents=intent)
 
 
@@ -71,6 +107,7 @@ async def play(interaction: discord.Interaction, query: str):
         traceback.print_exc()
         await interaction.followup.send("出问题了")
 
+
 async def enqueue_one(interaction: discord.Interaction, data):
     detector = video.VideoDownloadURLDataDetecter(data.url)
     stream = detector.detect_best_streams(
@@ -83,6 +120,7 @@ async def enqueue_one(interaction: discord.Interaction, data):
     data.url = stream[0].url
     await queue.put((interaction, data))
     await interaction.followup.send(f"Added **{data.title}** to queue")
+
 
 async def enqueue_bilibili(interaction: discord.Interaction, bv, pid=None) -> None:
     v = video.Video(bvid=bv)
@@ -230,7 +268,7 @@ async def list(interaction: discord.Interaction, action: str, url: str):
         await interaction.followup.send(f"Removed {processed_url} from playlist")
     elif action == "list":
         music_lst = list_all()
-        await interaction.followup.send("\n".join([f"{m.url}{(' p='+m.pid) if m.pid else ''}" for m in music_lst]))
+        await interaction.followup.send("\n".join([f"{m.url}{(' p=' + m.pid) if m.pid else ''}" for m in music_lst]))
     else:
         await interaction.followup.send("Invalid action")
 
@@ -250,8 +288,13 @@ async def fav(interaction: discord.Interaction, count: int = None):
 
 @bot.event
 async def on_ready():
+    global queue
+    # Initialize the queue here, ensuring it attaches to the CURRENT loop
+    queue = asyncio.Queue()
+
     await bot.tree.sync()
     print("ready", flush=True)
+
     if not hasattr(bot, "play_task"):
         bot.play_task = asyncio.create_task(_play())
 
@@ -286,4 +329,4 @@ class Data:
 
 
 if __name__ == '__main__':
-    bot.run(TOKEN,)
+    bot.run(TOKEN, )
