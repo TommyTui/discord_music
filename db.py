@@ -19,8 +19,11 @@ db.connect()
 db.create_tables([Music])
 
 
-def random_music(count=5):
-    return Music.select().order_by(fn.Random()).limit(count)
+def random_music(count=None):
+    if count is None:
+        return Music.select().order_by(fn.Random())
+    else:
+        return Music.select().order_by(fn.Random()).limit(count)
 
 
 def insert(url, type, pid=None):

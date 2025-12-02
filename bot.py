@@ -22,7 +22,6 @@ intent.voice_states = True
 intent.messages = True
 queue = asyncio.Queue()
 bot = commands.Bot(command_prefix='!', intents=intent)
-cv = asyncio.Condition()
 
 
 @bot.tree.command(description="摸摸")
@@ -60,12 +59,14 @@ async def play(interaction: discord.Interaction, query: str):
                 bv, pid = get_bv_and_p(query)
                 await enqueue_bilibili(interaction, bv, pid)
             elif 'youtube' in query:
-                await enqueue_ytb(interaction, query, False)
-            else:
                 await interaction.followup.send("Unsupported URL")
+                # await enqueue_ytb(interaction, query, False)
+            else:
+                await interaction.followup.send("Unsupported")
         else:
             # search on ytb
-            await enqueue_ytb(interaction, query, True)
+            # await enqueue_ytb(interaction, query, True)
+            await interaction.followup.send("Unsupported")
     except Exception as e:
         traceback.print_exc()
         await interaction.followup.send("出问题了")
@@ -144,31 +145,29 @@ def create_embed(interaction: discord.Interaction, data):
     return embed
 
 
-async def play_cb(error=None):
-    async with cv:
-        cv.notify()
-
-
 async def _play():
     while True:
         interaction: discord.Interaction
         interaction, data = await queue.get()
-        await interaction.channel.send(embed=create_embed(interaction, data))
-        music = get_bilibili(data) if data.type == 0 else get_youtube(data)
-        interaction.guild.voice_client.play(music, after=lambda e: asyncio.run(play_cb(e)))
-        async with cv:
+        try:
+            await interaction.channel.send(embed=create_embed(interaction, data))
+            music = get_bilibili(data) if data.type == 0 else get_youtube(data)
+            interaction.guild.voice_client.play(music)
             while interaction.guild.voice_client and interaction.guild.voice_client.is_playing():
-                await cv.wait()
-        if queue.empty() and interaction.guild.voice_client:
-            await interaction.guild.voice_client.disconnect(force=False)
-        queue.task_done()
+                await asyncio.sleep(2)
+            if queue.empty() and interaction.guild.voice_client:
+                await interaction.guild.voice_client.disconnect(force=False)
+            queue.task_done()
+        except:
+            traceback.print_exc()
+            await interaction.followup.send("出问题了")
 
 
 def get_bilibili(data):
     header = f'User-Agent: {HEADERS["User-Agent"]}\r\nReferer: {HEADERS["Referer"]}\r\n'
     ffmpeg_options = {
         'before_options': f'-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -headers "{header}"',
-        'options': '-vn'
+        'options': '-vn -loglevel quiet'
     }
     return discord.FFmpegPCMAudio(data.url, **ffmpeg_options)
 
@@ -176,7 +175,7 @@ def get_bilibili(data):
 def get_youtube(data):
     ffmpeg_options = {
         'before_options': f'-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-        'options': '-vn'
+        'options': '-vn -loglevel quiet'
     }
     return discord.FFmpegPCMAudio(data.url, **ffmpeg_options)
 
@@ -214,9 +213,7 @@ async def list(interaction: discord.Interaction, action: str, url: str):
     await interaction.response.defer()
     pid = None
     if 'bilibili' in url:
-        processed_url = url.split('/')[4]
-        match = re.search(r'\?p=\d+', url)
-        pid = int(match.group(0).split('=')[1]) if match else None
+        processed_url, pid = get_bv_and_p(url)
         type = "0"
     elif 'youtube' in url and url.startswith("http"):
         processed_url = url
@@ -239,7 +236,7 @@ async def list(interaction: discord.Interaction, action: str, url: str):
 
 
 @bot.tree.command(description="Play from playlist")
-async def fav(interaction: discord.Interaction, count: int = 5):
+async def fav(interaction: discord.Interaction, count: int = None):
     await interaction.response.defer()
     if not await ensure_voice(interaction):
         return
@@ -255,6 +252,8 @@ async def fav(interaction: discord.Interaction, count: int = 5):
 async def on_ready():
     await bot.tree.sync()
     print("ready", flush=True)
+    if not hasattr(bot, "play_task"):
+        bot.play_task = asyncio.create_task(_play())
 
 
 class Data:
@@ -286,12 +285,5 @@ class Data:
         return cls(1, info['title'], info['duration'], info['thumbnail'], url)
 
 
-async def main():
-    await asyncio.gather(
-        bot.start(TOKEN, ),
-        _play(),
-    )
-
-
 if __name__ == '__main__':
-    asyncio.run(main())
+    bot.run(TOKEN,)

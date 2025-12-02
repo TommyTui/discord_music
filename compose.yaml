@@ -1,10 +1,13 @@
 version: '3.8'
 services:
   app:
-    image: chococonuts/bot_x86:latest
+    build: 
+      context: .
+      dockerfile: Dockerfile
     environment:
       - TOKEN=${TOKEN}
     volumes:
       - ./discord.db:/bot/discord.db
     working_dir: /bot
     command: python bot.py
+    restart: always
